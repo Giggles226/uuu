@@ -37,8 +37,13 @@ jobs:
         env:
           # Flet 会自动下载 Android SDK 到这里（约 1-2 GB，耐心等）
           FLET_ANDROID_SDK_ROOT: ${{ github.workspace }}/.android-sdk
+          # 关闭彩色输出，避免日志被 ANSI 码搞乱
+          FLET_CLI_NO_RICH_OUTPUT: "true"
+          # 跳过 flutter doctor（CI 环境下多余）
+          FLET_CLI_SKIP_FLUTTER_DOCTOR: "true"
         run: |
-          flet build apk \
+          # --assume-yes 让 Flet 自动同意安装 Flutter / Android SDK
+          flet build apk --assume-yes \
             --project "ai_tavern_arena" \
             --org "com.giggles226" \
             --product "AI Tavern Arena" \
