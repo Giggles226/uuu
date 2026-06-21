@@ -1,0 +1,104 @@
+name: Build APK and publish to www
+
+on:
+  # 手动触发：在 uuu 仓库 Actions 页面点 "Run workflow"
+  workflow_dispatch:
+  # 打 tag 自动构建：git tag v1.0.1 && git push --tags
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Build Flet APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout uuu
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -c "import flet; print('flet', flet.__version__)"
+
+      - name: Build APK
+        env:
+          # Flet 会自动下载 Android SDK 到这里（约 1-2 GB，耐心等）
+          FLET_ANDROID_SDK_ROOT: ${{ github.workspace }}/.android-sdk
+        run: |
+          flet build apk \
+            --project "ai_tavern_arena" \
+            --org "com.giggles226" \
+            --product "AI Tavern Arena" \
+            --build-version "1.0.0" \
+            --build-number "1"
+
+      - name: Locate built APK
+        id: locate
+        run: |
+          echo "build/apk contents:"
+          ls -la build/apk 2>/dev/null || true
+          APK_PATH=$(find build -maxdepth 5 -name "*.apk" -not -path "*/\.*" | head -1)
+          if [ -z "$APK_PATH" ]; then
+            echo "::error::No APK found under build/"
+            exit 1
+          fi
+          echo "apk_path=$APK_PATH" >> "$GITHUB_OUTPUT"
+          echo "Found APK: $APK_PATH"
+          ls -la "$APK_PATH"
+
+      - name: Upload APK as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-apk
+          path: ${{ steps.locate.outputs.apk_path }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Push APK to Giggles226/www
+        env:
+          WWW_REPO_PAT: ${{ secrets.WWW_REPO_PAT }}
+        run: |
+          set -eu
+          if [ -z "${WWW_REPO_PAT}" ]; then
+            echo "::warning::Secret WWW_REPO_PAT is empty, skip publishing to www."
+            exit 0
+          fi
+
+          APK_PATH="${{ steps.locate.outputs.apk_path }}"
+          VERSION=$(python -c "import re; m=re.search(r'__version__\s*=\s*[\"\\']([^\"\\']+)', open('arena/__init__.py').read()); print(m.group(1) if m else 'app')")
+          APK_NAME="ai-tavern-arena-${VERSION}.apk"
+
+          echo "Publishing ${APK_NAME} to Giggles226/www …"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          rm -rf /tmp/www
+          git clone --depth=1 "https://x-access-token:${WWW_REPO_PAT}@github.com/Giggles226/www.git" /tmp/www
+
+          mkdir -p /tmp/www/apk
+          cp "$APK_PATH" "/tmp/www/apk/${APK_NAME}"
+
+          cd /tmp/www
+          git add apk/
+          # 没有变更时不要失败
+          if git diff --cached --quiet; then
+            echo "No APK change to commit."
+            exit 0
+          fi
+          git commit -m "ci: publish ${APK_NAME} (build ${{ github.run_number }})"
+          git push
+          echo "✅ Pushed ${APK_NAME} to www"
