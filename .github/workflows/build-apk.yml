@@ -42,8 +42,8 @@ jobs:
           # 跳过 flutter doctor（CI 环境下多余）
           FLET_CLI_SKIP_FLUTTER_DOCTOR: "true"
         run: |
-          # --assume-yes 让 Flet 自动同意安装 Flutter / Android SDK
-          flet build apk --assume-yes \
+          # --yes 让 Flet 自动同意安装 Flutter / Android SDK
+          flet build apk --yes \
             --project "ai_tavern_arena" \
             --org "com.giggles226" \
             --product "AI Tavern Arena" \
