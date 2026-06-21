@@ -98,12 +98,16 @@ jobs:
           cp "$APK_PATH" "/tmp/www/apk/${APK_NAME}"
 
           cd /tmp/www
-          git add apk/
+          git -c user.name="github-actions[bot]" \
+              -c user.email="github-actions[bot]@users.noreply.github.com" \
+              add apk/
           # 没有变更时不要失败
           if git diff --cached --quiet; then
             echo "No APK change to commit."
             exit 0
           fi
-          git commit -m "ci: publish ${APK_NAME} (build ${{ github.run_number }})"
+          git -c user.name="github-actions[bot]" \
+              -c user.email="github-actions[bot]@users.noreply.github.com" \
+              commit -m "ci: publish ${APK_NAME} (build ${{ github.run_number }})"
           git push
           echo "✅ Pushed ${APK_NAME} to www"
