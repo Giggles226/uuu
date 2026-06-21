@@ -43,7 +43,7 @@ def build_arena_view(page: ft.Page, state: ArenaState) -> ft.Control:
                         size=12, color=ft.Colors.GREY,
                     ),
                 ]),
-                padding=ft.padding.all(10),
+                padding=ft.Padding.all(10),
                 border_radius=10,
                 bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.AMBER),
             )
@@ -60,7 +60,7 @@ def build_arena_view(page: ft.Page, state: ArenaState) -> ft.Control:
         ] if survivors else []
         for comp in survivors:
             chat = next((c for c in state.private_chats if c.competitor_id == comp.id), None)
-            survivors_block.controls.append(_build_competitor_card(comp, chat, state, runner))
+            survivors_block.controls.append(_build_competitor_card(comp, chat, state))
 
         # 淘汰选手
         eliminated = state.get_eliminated()
@@ -91,8 +91,8 @@ def build_arena_view(page: ft.Page, state: ArenaState) -> ft.Control:
                             ], spacing=6),
                             ft.Text(msg.content, size=12),
                         ], spacing=4),
-                        padding=ft.padding.all(10),
-                        border=ft.border.all(1, ft.Colors.with_opacity(0.1, ft.Colors.AMBER)),
+                        padding=ft.Padding.all(10),
+                        border=ft.Border.all(1, ft.Colors.with_opacity(0.1, ft.Colors.AMBER)),
                         border_radius=8,
                     )
                 )
@@ -190,7 +190,8 @@ def build_arena_view(page: ft.Page, state: ArenaState) -> ft.Control:
                     ))
                     break
                 await asyncio.sleep(0.05)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
+            logger.exception("game loop crashed")
             state.set_error(str(e))
 
     # ─── 顶部标题 ───
@@ -199,7 +200,7 @@ def build_arena_view(page: ft.Page, state: ArenaState) -> ft.Control:
             ft.Text("🍺 AI 酒馆竞技场", size=28, weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER),
             ft.Text("生存博弈 · 裁判 Agent · 私人对话淘汰制", size=12, color=ft.Colors.GREY),
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=2),
-        padding=ft.padding.symmetric(vertical=10),
+        padding=ft.Padding.symmetric(vertical=10),
     )
 
     # ─── 阶段指示器 ───
@@ -209,13 +210,13 @@ def build_arena_view(page: ft.Page, state: ArenaState) -> ft.Control:
             ft.Icon(ft.Icons.PAUSE, color=ft.Colors.AMBER),
             ft.Text("游戏已暂停", weight=ft.FontWeight.BOLD, color=ft.Colors.AMBER),
         ]),
-        padding=ft.padding.all(10),
-        border=ft.border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.AMBER)),
+        padding=ft.Padding.all(10),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.AMBER)),
         border_radius=10,
         bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.AMBER),
     )
 
-    err_banner = ft.Container(visible=False, padding=ft.padding.all(8))
+    err_banner = ft.Container(visible=False, padding=ft.Padding.all(8))
 
     # ─── 问题输入 + 启动按钮 ───
     question_field = ft.TextField(
@@ -236,8 +237,8 @@ def build_arena_view(page: ft.Page, state: ArenaState) -> ft.Control:
     start_button.text = "🚀 开始游戏"
 
     # ─── 配置面板 / 规则 / 快照 ───
-    config_panel = build_config_panel(page, state, on_change=lambda: None)
-    rule_editor = build_rule_editor(state, on_change=refresh)
+    config_panel = build_config_panel(page, state, on_change=refresh)
+    rule_editor = build_rule_editor(state, on_save=refresh)
     snapshot_panel = build_snapshot_panel(state, on_change=refresh)
 
     # ─── 顶部状态 ───
@@ -280,11 +281,10 @@ def build_arena_view(page: ft.Page, state: ArenaState) -> ft.Control:
 # ─── 内部 ───
 
 def _fmt_time(ts: int) -> str:
-    import time
     return time.strftime("%H:%M:%S", time.localtime(ts / 1000))
 
 
-def _build_competitor_card(comp, chat, state, runner) -> ft.Control:
+def _build_competitor_card(comp, chat, state) -> ft.Control:
     is_conversing = state.current_conversation_id == comp.id
     is_loading = is_conversing and state.status == GameStatus.LOADING
 
@@ -302,7 +302,7 @@ def _build_competitor_card(comp, chat, state, runner) -> ft.Control:
                         ),
                         ft.Text(m.content, size=11),
                     ], spacing=2),
-                    padding=ft.padding.all(6),
+                    padding=ft.Padding.all(6),
                     border_radius=6,
                     bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.ON_SURFACE),
                 )
@@ -333,8 +333,8 @@ def _build_competitor_card(comp, chat, state, runner) -> ft.Control:
 
     return ft.Container(
         content=body,
-        padding=ft.padding.all(10),
-        border=ft.border.all(
+        padding=ft.Padding.all(10),
+        border=ft.Border.all(
             2 if is_conversing else 1,
             ft.Colors.AMBER if is_conversing else ft.Colors.with_opacity(0.1, ft.Colors.ON_SURFACE),
         ),
@@ -355,8 +355,8 @@ def _build_eliminated_card(comp, chat, reason: str) -> ft.Control:
     ], spacing=4)
     return ft.Container(
         content=body,
-        padding=ft.padding.all(8),
-        border=ft.border.all(1, ft.Colors.with_opacity(0.1, ft.Colors.RED)),
+        padding=ft.Padding.all(8),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.1, ft.Colors.RED)),
         border_radius=8,
         opacity=0.6,
     )

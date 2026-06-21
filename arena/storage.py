@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -15,9 +17,14 @@ from .models import (
     ApiType,
 )
 
+logger = logging.getLogger(__name__)
+
 
 class Storage:
-    """统一的 JSON 存储管理器。"""
+    """统一的 JSON 存储管理器。
+
+    线程安全：所有读写通过自带的 `RLock` 串行化。
+    """
 
     def __init__(self, base_dir: str | Path):
         self.base = Path(base_dir)
@@ -26,27 +33,48 @@ class Storage:
         self.competitors_file = self.base / "competitors.json"
         self.judge_file = self.base / "judge_model.json"
         self.rule_file = self.base / "game_rule.json"
-        self.aria_state_file = self.base / "arena_state.json"
+        self.arena_state_file = self.base / "arena_state.json"
         self.snapshots_file = self.base / "snapshots.json"
         self.rounds_file = self.base / "rounds.json"
         self.scores_file = self.base / "total_scores.json"
+        # 简单锁：保护所有 JSON 写入的原子性
+        self._lock = threading.RLock()
 
     # ─── 通用读写 ───
 
     def _read_json(self, path: Path, default: Any) -> Any:
         if not path.exists():
             return default
-        try:
-            with path.open("r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            return default
+        with self._lock:
+            try:
+                with path.open("r", encoding="utf-8") as f:
+                    return json.load(f)
+            except (OSError, json.JSONDecodeError) as e:
+                logger.warning("读取 JSON 失败 %s: %s — 返回默认值", path, e)
+                return default
 
     def _write_json(self, path: Path, data: Any) -> None:
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        with tmp.open("w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        tmp.replace(path)
+        with self._lock:
+            tmp = path.with_suffix(path.suffix + ".tmp")
+            try:
+                with tmp.open("w", encoding="utf-8") as f:
+                    json.dump(data, f, ensure_ascii=False, indent=2)
+                tmp.replace(path)
+                # Linux/Android 上收紧文件权限（仅所有者可读写）
+                self._restrict_perm(path)
+            except OSError as e:
+                logger.error("写入 JSON 失败 %s: %s", path, e)
+                raise
+
+    @staticmethod
+    def _restrict_perm(path: Path) -> None:
+        """在 Unix 系（Linux/macOS/Android）上设置 0600 权限。Windows 跳过。"""
+        if os.name != "posix":
+            return
+        try:
+            os.chmod(path, 0o600)
+        except OSError as e:
+            logger.debug("设置 0600 权限失败 %s: %s", path, e)
 
     # ─── API Keys ───
 
@@ -104,11 +132,11 @@ class Storage:
 
     # ─── Arena 状态（每轮临时数据） ───
 
-    def load_aria_state(self) -> dict:
-        return self._read_json(self.aria_state_file, {})
+    def load_arena_state(self) -> dict:
+        return self._read_json(self.arena_state_file, {})
 
-    def save_aria_state(self, state: dict) -> None:
-        self._write_json(self.aria_state_file, state)
+    def save_arena_state(self, state: dict) -> None:
+        self._write_json(self.arena_state_file, state)
 
     # ─── Rounds / Scores ───
 
@@ -142,3 +170,4 @@ class Storage:
     def delete_snapshot(self, snap_id: str) -> None:
         snaps = [s for s in self.load_snapshots() if s.id != snap_id]
         self.save_snapshots(snaps)
+

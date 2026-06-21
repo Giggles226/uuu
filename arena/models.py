@@ -77,11 +77,13 @@ def gen_id() -> str:
 
 
 def gen_msg_id() -> str:
-    return f"msg_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+    """消息 ID。纯 uuid4 十六进制，避免同毫秒前缀碰撞。"""
+    return f"msg_{uuid.uuid4().hex}"
 
 
 def gen_snap_id() -> str:
-    return f"snap_{int(time.time() * 1000)}_{uuid.uuid4().hex[:6]}"
+    """快照 ID。"""
+    return f"snap_{uuid.uuid4().hex}"
 
 
 # ─── API Key 全局配置 ───

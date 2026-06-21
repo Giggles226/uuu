@@ -1,16 +1,20 @@
-"""裁判 Agent 逻辑 — 评分、私人对话、淘汰判定、公共发言。"""
+"""裁判 Agent 逻辑 — 私人对话、淘汰判定、公共发言。"""
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from typing import Optional
 
 from .llm import router
 from .llm.base import ProviderError
 from .models import (
-    AIConfig, ChatMessage, GameRule, PublicMessage, gen_msg_id,
+    AIConfig, ChatMessage, GameRule, ModelStatus, PublicMessage, gen_msg_id,
 )
 from .state import ArenaState
+
+logger = logging.getLogger(__name__)
 
 
 # ─── 工具函数 ───
@@ -61,84 +65,11 @@ async def _call_with_fallback(
         return resp.content, None
     except ProviderError as e:
         if e.is_quota:
-            state.update_model_status(config.id, config.run_status.__class__.QUOTA_EXHAUSTED, str(e))
+            state.update_model_status(config.id, ModelStatus.QUOTA_EXHAUSTED, str(e))
         return "", f"API错误({e.status}): {e.body[:200]}"
-    except Exception as e:
-        return "", str(e)
-
-
-# ─── 旧模式：直接评分（保留作为降级路径） ───
-
-async def judge_answers(
-    judge: AIConfig,
-    rule: GameRule,
-    question: str,
-    answers: dict[str, str],
-    competitor_names: dict[str, tuple[str, str]],  # id -> (name, icon)
-    state: ArenaState,
-) -> dict:
-    """调用裁判模型对一组回答打分。"""
-    answers_text = "\n\n".join(
-        f"【{competitor_names.get(mid, (mid, '🤖'))[1]} {competitor_names.get(mid, (mid, '🤖'))[0]}】\n{text}"
-        for mid, text in answers.items()
-    )
-
-    judge_prompt = (
-        "你是本次比赛的裁判。请根据以下规则和评分标准，评判各模型的回答。\n\n"
-        f"比赛规则：\n{rule.rules}\n\n"
-        f"{rule.judge_criteria}\n\n"
-        f"本轮问题：{question}\n\n"
-        f"各模型回答：\n{answers_text}\n\n"
-        "请严格按照JSON格式返回（不要加其他文字）：\n"
-        "{\n"
-        '  "scores": { "model_id": 分数 },\n'
-        '  "rankings": ["第1名id", "第2名id", ...],\n'
-        '  "ruleCompliance": { "model_id": 规则遵守度(0-100) },\n'
-        '  "comment": "整体点评（200字以内）"\n'
-        "}"
-    )
-
-    content, err = await _call_with_fallback(judge, "", judge_prompt, state, temperature=0.3)
-    if err:
-        return {
-            "scores": {mid: max(50, 80 - i * 5) for i, mid in enumerate(answers)},
-            "rankings": list(answers.keys()),
-            "rule_compliance": {mid: 70 for mid in answers},
-            "comment": f"评分失败：{err}",
-        }
-
-    parsed = _extract_json(content)
-    if not parsed:
-        return {
-            "scores": {mid: 70 for mid in answers},
-            "rankings": list(answers.keys()),
-            "rule_compliance": {mid: 70 for mid in answers},
-            "comment": content,
-        }
-
-    scores = {mid: 60 for mid in answers}
-    if isinstance(parsed.get("scores"), dict):
-        for mid in answers:
-            s = parsed["scores"].get(mid)
-            if isinstance(s, (int, float)) and 0 <= s <= 100:
-                scores[mid] = int(s)
-
-    compliance = {mid: 60 for mid in answers}
-    if isinstance(parsed.get("ruleCompliance"), dict):
-        for mid in answers:
-            rc = parsed["ruleCompliance"].get(mid)
-            if isinstance(rc, (int, float)) and 0 <= rc <= 100:
-                compliance[mid] = int(rc)
-
-    rankings = parsed.get("rankings") if isinstance(parsed.get("rankings"), list) else list(answers.keys())
-    rankings = [r for r in rankings if r in answers] or list(answers.keys())
-
-    return {
-        "scores": scores,
-        "rankings": rankings,
-        "rule_compliance": compliance,
-        "comment": parsed.get("comment") or content,
-    }
+    except Exception as e:  # noqa: BLE001
+        logger.exception("调用模型 %s 失败", config.name)
+        return "", f"未预期错误: {e}"
 
 
 # ─── 裁判 Agent：私人对话 ───
@@ -361,6 +292,6 @@ def make_public_announcement(
         sender_name=judge.name or "裁判",
         sender_icon=judge.icon or "👑",
         content=content,
-        timestamp=int(__import__("time").time() * 1000),
+        timestamp=int(time.time() * 1000),
         visible_to="all",
     )

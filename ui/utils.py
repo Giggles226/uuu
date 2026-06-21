@@ -16,7 +16,7 @@ def status_badge(status: str) -> ft.Container:
     return ft.Container(
         content=ft.Text(label, size=11, color=fg, weight=ft.FontWeight.BOLD),
         bgcolor=bg,
-        padding=ft.padding.symmetric(horizontal=8, vertical=3),
+        padding=ft.Padding.symmetric(horizontal=8, vertical=3),
         border_radius=10,
     )
 
@@ -27,5 +27,5 @@ def glass_card(content: ft.Control, padding: int = 16) -> ft.Container:
         padding=padding,
         border_radius=14,
         bgcolor=ft.Colors.with_opacity(0.04, ft.Colors.ON_SURFACE),
-        border=ft.border.all(1, ft.Colors.with_opacity(0.08, ft.Colors.ON_SURFACE)),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.08, ft.Colors.ON_SURFACE)),
     )

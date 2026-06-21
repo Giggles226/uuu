@@ -8,6 +8,7 @@ from arena.models import (
     create_empty_ai_config,
 )
 from arena.llm.router import DEFAULT_ENDPOINTS
+from arena.state import ArenaState
 from .utils import status_badge
 
 
@@ -16,7 +17,7 @@ def api_type_options(include_custom: bool = True) -> list[ft.dropdown.Option]:
     return [ft.dropdown.Option(key=t.value, text=API_TYPE_LABELS[t]) for t in types_]
 
 
-def build_config_panel(page: ft.Page, state, on_change) -> ft.Control:
+def build_config_panel(page: ft.Page, state: ArenaState, on_change) -> ft.Control:
     """构造一个会随 state 变化的配置面板容器。"""
 
     root = ft.Column(spacing=14)
@@ -25,12 +26,18 @@ def build_config_panel(page: ft.Page, state, on_change) -> ft.Control:
     judge_block = ft.Container(visible=False)
     competitor_block = ft.Column(spacing=6)
 
-    # 复用的对话框（保持简单）
     edit_dialog = ft.Ref[ft.AlertDialog]()
     api_dialog = ft.Ref[ft.AlertDialog]()
     mgr_dialog = ft.Ref[ft.AlertDialog]()
 
-    form_state = {"editing": None, "view": "add"}  # "add" or "edit"
+    form_state: dict = {"editing": None, "view": "add"}
+
+    def safe_refresh():
+        """统一 refresh 入口，try/except 防止 callback 报错挂掉 UI。"""
+        try:
+            refresh()
+        except Exception as e:  # noqa: BLE001
+            print(f"[config_panel] refresh error: {e}")
 
     def refresh():
         # 1) API Keys
@@ -42,17 +49,26 @@ def build_config_panel(page: ft.Page, state, on_change) -> ft.Control:
         # 2) Judge
         if state.judge_model:
             judge_block.visible = True
-            judge_block.content = _build_judge_card(state, on_change)
+            judge_block.content = _build_judge_card(state, safe_refresh)
         else:
             judge_block.visible = False
 
         # 3) Competitors
         competitor_block.controls = [
-            _build_competitor_row(comp, state, on_change) for comp in state.competitors
+            _build_competitor_row(comp, state, safe_refresh) for comp in state.competitors
         ] or [ft.Text("尚未添加模型", color=ft.Colors.GREY, size=12)]
 
-        # 4) 标题数量
+        # 4) 标题数量（显式 update，避免依赖 page.update 隐式触发）
         comp_title.value = f"参赛模型 ({len(state.competitors)}/24)"
+        try:
+            comp_title.update()
+        except RuntimeError:
+            # 尚未挂到 page 上
+            pass
+
+        # 5) 外部回调
+        if on_change:
+            on_change()
 
         page.update()
 
@@ -62,7 +78,7 @@ def build_config_panel(page: ft.Page, state, on_change) -> ft.Control:
         label="API 类型",
         options=api_type_options(),
         value=ApiType.OPENAI.value,
-        on_change=lambda e: _update_endpoint_hint(),
+        on_select=lambda e: _update_endpoint_hint(),
     )
     endpoint_f = ft.TextField(label="API 地址（留空使用默认）")
     model_f = ft.TextField(label="模型名称", hint_text="例如: gpt-4o")
@@ -144,12 +160,13 @@ def build_config_panel(page: ft.Page, state, on_change) -> ft.Control:
         else:
             state.add_competitor(draft)
         _close_dlg(edit_dialog)
-        refresh()
+        safe_refresh()
 
     def _close_dlg(ref):
         ref.current.open = False
         page.update()
 
+    # 一次性挂到 overlay，后续复用（修复泄漏：之前每次都 append 新 dialog）
     page.overlay.append(edit_dlg)
 
     # ─── API Key 设置对话框 ───
@@ -157,7 +174,7 @@ def build_config_panel(page: ft.Page, state, on_change) -> ft.Control:
         label="API 类型",
         options=api_type_options(include_custom=False),
         value=ApiType.OPENAI.value,
-        on_change=lambda e: _update_ak_endpoint_hint(),
+        on_select=lambda e: _update_ak_endpoint_hint(),
     )
     ak_key = ft.TextField(label="API Key", password=True, can_reveal_password=True)
     ak_endpoint = ft.TextField(label="自定义端点（可选）")
@@ -194,10 +211,11 @@ def build_config_panel(page: ft.Page, state, on_change) -> ft.Control:
         if state.storage:
             state.storage.upsert_api_key(cfg)
         _close_dlg(api_dialog)
+        # 关闭可能打开的管理面板，避免重复叠加
         if mgr_dialog.current and mgr_dialog.current.open:
             mgr_dialog.current.open = False
-        refresh()
-        _open_api_manager()  # 重新打开以反映更改
+            page.update()
+        safe_refresh()
 
     api_dlg = ft.AlertDialog(
         ref=api_dialog,
@@ -212,8 +230,8 @@ def build_config_panel(page: ft.Page, state, on_change) -> ft.Control:
     )
     page.overlay.append(api_dlg)
 
-    # ─── API Key 管理对话框 ───
-    def _open_api_manager():
+    # ─── API Key 管理对话框（也用同一个 ref 复用） ───
+    def _build_api_manager_content() -> ft.Control:
         configs = state.storage.load_api_keys() if state.storage else []
         rows = []
         for at in [t for t in ApiType if t != ApiType.CUSTOM]:
@@ -238,30 +256,36 @@ def build_config_panel(page: ft.Page, state, on_change) -> ft.Control:
                             on_click=lambda _, a=at: _delete_ak(a),
                         ),
                     ]),
-                    padding=ft.padding.all(8),
-                    border=ft.border.all(1, ft.Colors.with_opacity(0.1, ft.Colors.ON_SURFACE)),
+                    padding=ft.Padding.all(8),
+                    border=ft.Border.all(1, ft.Colors.with_opacity(0.1, ft.Colors.ON_SURFACE)),
                     border_radius=8,
                 )
             )
-
-        mgr_dlg = ft.AlertDialog(
-            ref=mgr_dialog,
-            title=ft.Text("管理全局 API Key"),
-            content=ft.Container(
-                content=ft.Column(controls=rows, scroll=ft.ScrollMode.AUTO, spacing=6),
-                width=400, height=500,
-            ),
-            actions=[ft.TextButton("完成", on_click=lambda _: _close_dlg(mgr_dialog))],
+        return ft.Container(
+            content=ft.Column(controls=rows, scroll=ft.ScrollMode.AUTO, spacing=6),
+            width=400, height=500,
         )
-        page.overlay.append(mgr_dlg)
-        mgr_dlg.open = True
+
+    # 创建一个带 ref 的持久 dialog，append 到 overlay 一次
+    mgr_dlg = ft.AlertDialog(
+        ref=mgr_dialog,
+        title=ft.Text("管理全局 API Key"),
+        content=_build_api_manager_content(),
+        actions=[ft.TextButton("完成", on_click=lambda _: _close_dlg(mgr_dialog))],
+    )
+    page.overlay.append(mgr_dlg)
+
+    def _open_api_manager():
+        # 只更新内容并打开（dialog 已经在 overlay 里，不会泄漏）
+        mgr_dialog.current.content = _build_api_manager_content()
+        mgr_dialog.current.open = True
         page.update()
 
     def _delete_ak(at: ApiType):
         if state.storage:
             state.storage.delete_api_key(at)
-        mgr_dialog.current.open = False
-        refresh()
+        safe_refresh()
+        # 重新打开管理面板以反映更改
         _open_api_manager()
 
     # ─── 组装 ───
@@ -288,8 +312,8 @@ def build_config_panel(page: ft.Page, state, on_change) -> ft.Control:
 
     root.controls = [api_section, ft.Divider(height=20), judge_block, competitor_section]
 
-    # 注册刷新回调
-    state.on_change(refresh)
+    # 注册刷新回调（state 变化时也刷新本面板）
+    state.on_change(safe_refresh)
 
     # 初次刷新
     refresh()
@@ -315,7 +339,7 @@ def _build_api_key_row(page, cfg: ApiKeyConfig) -> ft.Control:
     )
 
 
-def _build_competitor_row(comp: AIConfig, state, on_change) -> ft.Control:
+def _build_competitor_row(comp: AIConfig, state: ArenaState, on_refresh) -> ft.Control:
     return ft.Container(
         content=ft.Row([
             ft.Text(comp.icon, size=22),
@@ -327,21 +351,21 @@ def _build_competitor_row(comp: AIConfig, state, on_change) -> ft.Control:
             ft.IconButton(
                 ft.Icons.WORKSPACE_PREMIUM, icon_color=ft.Colors.AMBER,
                 tooltip="设为裁判",
-                on_click=lambda _, c=comp: state.set_judge_model(c),
+                on_click=lambda _, c=comp: (state.set_judge_model(c), on_refresh()),
             ),
             ft.IconButton(
                 ft.Icons.DELETE_OUTLINE, icon_color=ft.Colors.RED_400,
                 tooltip="删除",
-                on_click=lambda _, cid=comp.id: state.remove_competitor(cid),
+                on_click=lambda _, cid=comp.id: (state.remove_competitor(cid), on_refresh()),
             ),
         ]),
-        padding=ft.padding.symmetric(horizontal=10, vertical=6),
-        border=ft.border.all(1, ft.Colors.with_opacity(0.1, ft.Colors.ON_SURFACE)),
+        padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.1, ft.Colors.ON_SURFACE)),
         border_radius=8,
     )
 
 
-def _build_judge_card(state, on_change) -> ft.Control:
+def _build_judge_card(state: ArenaState, on_refresh) -> ft.Control:
     j = state.judge_model
     return ft.Container(
         content=ft.Row([
@@ -355,11 +379,11 @@ def _build_judge_card(state, on_change) -> ft.Control:
             ft.IconButton(
                 ft.Icons.CLOSE, icon_color=ft.Colors.RED_400,
                 tooltip="取消裁判",
-                on_click=lambda _: state.clear_judge(),
+                on_click=lambda _: (state.clear_judge(), on_refresh()),
             ),
         ]),
         bgcolor=ft.Colors.with_opacity(0.06, ft.Colors.AMBER),
-        border=ft.border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.AMBER)),
+        border=ft.Border.all(1, ft.Colors.with_opacity(0.3, ft.Colors.AMBER)),
         border_radius=10,
-        padding=ft.padding.all(10),
+        padding=ft.Padding.all(10),
     )

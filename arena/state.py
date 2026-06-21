@@ -65,7 +65,7 @@ class ArenaState:
             self.game_rule = rule
         self.round_history = self.storage.load_rounds()
         self.total_scores = self.storage.load_scores()
-        aria = self.storage.load_aria_state()
+        aria = self.storage.load_arena_state()
         if aria:
             self.eliminated_models = list(aria.get("eliminated_models", []))
             self.elimination_reasons = dict(aria.get("elimination_reasons", {}))
@@ -89,7 +89,7 @@ class ArenaState:
         self.storage.save_rule(self.game_rule)
         self.storage.save_rounds(self.round_history)
         self.storage.save_scores(self.total_scores)
-        self.storage.save_aria_state({
+        self.storage.save_arena_state({
             "eliminated_models": self.eliminated_models,
             "elimination_reasons": self.elimination_reasons,
             "round": self.round,
@@ -127,6 +127,12 @@ class ArenaState:
 
     def add_competitor(self, draft: AIConfig) -> AIConfig:
         if len(self.competitors) >= MAX_COMPETITORS:
+            return draft
+        # 去重：同 (api_type, model_name) 不重复添加
+        if any(
+            c.api_type == draft.api_type and c.model_name == draft.model_name
+            for c in self.competitors
+        ):
             return draft
         idx = len(self.competitors)
         c = AIConfig(
@@ -268,6 +274,11 @@ class ArenaState:
     # ─── 回合开始 / 推进 ───
 
     def start_round(self) -> bool:
+        # 暂停状态下必须先恢复，不能直接开始新的一轮
+        if self.status == GameStatus.PAUSED:
+            self.error = "游戏已暂停，请先恢复"
+            self.notify()
+            return False
         survivors = self.get_survivors()
         if len(survivors) < 2:
             self.error = "至少需要 2 个存活参赛模型"

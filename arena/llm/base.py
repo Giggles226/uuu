@@ -58,24 +58,43 @@ class ProviderError(Exception):
         return f"[{self.status}] {self.body[:300]}"
 
 
-# ─── 额度耗尽关键字（中文 + 英文） ───
+# ─── 额度耗尽关键字（中英文） ───
+# 收紧正则：避免把一般 4xx 误判为额度问题。关键词要"明确语义"，
+# 不再用宽泛的 "quota / balance / exceeded / rate" 等。
 
-QUOTA_PATTERNS = [
-    r"quota", r"exceeded", r"billing", r"insufficient", r"balance",
-    r"rate.?limit", r"too many requests", r"429", r"402", r"403.*quota",
-    r"账户.*余额", r"额度.*不足", r"欠费", r"limit.*exceeded",
-    r"insufficient_quota", r"insufficient balance",
-    r"resource_exhausted", r"limit reached", r"spending limit",
-    r"余额不足", r"已欠费", r"超限", r"超出限制",
+QUOTA_PATTERNS: list[tuple[str, re.Pattern]] = [
+    # 明确额度类
+    ("insufficient_quota", re.compile(r"insufficient[_\s-]?quota", re.I)),
+    ("insufficient_balance", re.compile(r"insufficient[_\s-]?balance", re.I)),
+    ("quota_exceeded", re.compile(r"quota[_\s-]?exceeded", re.I)),
+    ("billing_hard_limit", re.compile(r"billing[_\s-]?hard[_\s-]?limit", re.I)),
+    ("billing_not_active", re.compile(r"billing[_\s-]?(?:not[_\s-]?active|disabled|issue)", re.I)),
+    ("resource_exhausted", re.compile(r"resource[_\s-]?exhausted", re.I)),
+    ("rate_limit_exceeded", re.compile(r"rate[_\s-]?limit[_\s-]?exceeded", re.I)),
+    ("spending_limit", re.compile(r"spending[_\s-]?limit", re.I)),
+    ("payment_required", re.compile(r"payment[_\s-]?required", re.I)),
+    # 中文
+    ("余额不足", re.compile(r"余额不足|额度不足|欠费|已欠费|账户余额不足|超限|超出限制|超额度", re.I)),
+    # Anthropic 特有
+    ("anthropic_quota", re.compile(r"you[_\s-]?(?:exceeded|hit).{0,30}?(?:quota|usage|tokens|requests)", re.I)),
 ]
 
 
 def looks_like_quota_error(status: int, body: str) -> bool:
+    """判断响应是否表示"额度耗尽"或"计费问题"。
+
+    - HTTP 402/429 → 视为额度/限流问题
+    - HTTP 200/201/4xx 其它：需要看 body 关键字
+    """
     if status in (402, 429):
         return True
-    if status == 403 and any(re.search(p, body, re.IGNORECASE) for p in QUOTA_PATTERNS):
-        return True
-    return any(re.search(p, body, re.IGNORECASE) for p in QUOTA_PATTERNS)
+    # body 必须是错误响应里的 JSON 文本才检查（避免误把正常消息里的 "balance" 之类的词算上）
+    if status < 400:
+        return False
+    for _, pat in QUOTA_PATTERNS:
+        if pat.search(body):
+            return True
+    return False
 
 
 # ─── 适配器基类 ───

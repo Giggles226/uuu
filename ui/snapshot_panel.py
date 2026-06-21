@@ -61,8 +61,8 @@ def build_snapshot_panel(state, on_change) -> ft.Control:
                         ),
                     ],
                 ),
-                padding=ft.padding.all(8),
-                border=ft.border.all(1, ft.Colors.with_opacity(0.1, ft.Colors.ON_SURFACE)),
+                padding=ft.Padding.all(8),
+                border=ft.Border.all(1, ft.Colors.with_opacity(0.1, ft.Colors.ON_SURFACE)),
                 border_radius=8,
             )
         )
