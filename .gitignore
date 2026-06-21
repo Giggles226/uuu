@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+build/
+dist/
+*.spec
+.DS_Store
+.idea/
+.vscode/
+local_config.json
+storage/*.json
+!storage/.gitkeep
