@@ -231,11 +231,8 @@ class ArenaRunner:
 
         # 检查活跃选手数量，<= 1 自动结束
         survivors = self.state.get_survivors()
-        if len(survivors) < 2:
-            self.state.set_status(GameStatus.FINISHED)
-            self.state.set_phase(GamePhase.GAME_OVER)
-            return
 
+        # 无论是否 GAME_OVER，都先记录这一轮（修复 M3：之前剩 1 人时直接 return 导致本轮问答丢失）
         record = RoundRecord(
             round=self.state.round,
             question=self.state.question,
@@ -252,6 +249,11 @@ class ArenaRunner:
             timestamp=int(time.time() * 1000),
         )
         self.state.add_round_record(record)
+
+        if len(survivors) < 2:
+            self.state.set_status(GameStatus.FINISHED)
+            self.state.set_phase(GamePhase.GAME_OVER)
+            return
 
         # 给存活选手每人 10 分
         new_scores = {s.id: 10 for s in survivors}

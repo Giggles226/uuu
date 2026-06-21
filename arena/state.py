@@ -191,14 +191,20 @@ class ArenaState:
     # ─── 模型状态 ───
 
     def update_model_status(self, mid: str, status: ModelStatus, error: Optional[str] = None) -> None:
+        # 修复 M8：未命中 mid 时不再盲目写盘 + notify，避免无谓 I/O 和 UI 闪屏
+        found = False
         for c in self.competitors:
             if c.id == mid:
                 c.run_status = status
                 c.last_error = error
+                found = True
                 break
         if self.judge_model and self.judge_model.id == mid:
             self.judge_model.run_status = status
             self.judge_model.last_error = error
+            found = True
+        if not found:
+            return
         self._save_persistent()
         self.notify()
 

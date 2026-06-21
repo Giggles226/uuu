@@ -20,23 +20,40 @@ logger = logging.getLogger(__name__)
 # ─── 工具函数 ───
 
 def _extract_json(text: str) -> Optional[dict]:
-    """从模型返回的文本中尽力提取 JSON 对象。"""
+    r"""从模型返回的文本中尽力提取 JSON 对象。
+
+    修复 M4：之前用非贪婪正则 ``\{[\s\S]*?\}``，对嵌套 JSON（如 ``{"a":{"b":1}}``）
+    会停在第一个 ``}``，拿到非法片段。改用 ``json.JSONDecoder().raw_decode``，
+    它能从任意位置开始解码一个完整的 JSON 文档，天然支持嵌套。
+    """
     if not text:
         return None
+    decoder = json.JSONDecoder()
     # 优先尝试 ```json ... ``` 块
     m = re.search(r"```(?:json)?\s*(\{[\s\S]*?\})\s*```", text)
     if m:
         try:
-            return json.loads(m.group(1))
+            obj, _end = decoder.raw_decode(m.group(1))
+            if isinstance(obj, dict):
+                return obj
         except json.JSONDecodeError:
             pass
-    # 其次尝试最外层 {...}
-    m = re.search(r"\{[\s\S]*\}", text)
-    if m:
-        try:
-            return json.loads(m.group(0))
-        except json.JSONDecodeError:
-            pass
+    # 然后尝试任意位置的第一个 { 起的合法 JSON
+    for i, ch in enumerate(text):
+        if ch == "{":
+            try:
+                obj, _end = decoder.raw_decode(text[i:])
+                if isinstance(obj, dict):
+                    return obj
+            except json.JSONDecodeError:
+                continue
+    # 退路：尝试把整个 text 解析
+    try:
+        obj, _ = decoder.raw_decode(text)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
     return None
 
 

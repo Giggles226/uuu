@@ -261,6 +261,16 @@ def test_json_extraction():
     assert _extract_json("prefix {\"a\": 1} suffix") == {"a": 1}
     assert _extract_json("no json here") is None
     assert _extract_json("") is None
+    # 修复 M4：嵌套 JSON（之前非贪婪正则会取到第一个 } 而失败）
+    assert _extract_json('prefix {"a": {"b": 1, "c": [1, 2]}} suffix') == {
+        "a": {"b": 1, "c": [1, 2]}
+    }
+    # 多行 + 嵌套
+    assert _extract_json('```json\n{\n  "a": {\n    "b": 2\n  }\n}\n```') == {"a": {"b": 2}}
+    # 数组里包对象
+    assert _extract_json('text {"items": [{"x": 1}, {"y": 2}]} end') == {
+        "items": [{"x": 1}, {"y": 2}]
+    }
     print("✓ test_json_extraction")
 
 
